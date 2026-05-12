@@ -1,0 +1,51 @@
+{
+  "name": "memflow",
+  "version": "1.0.6",
+  "type": "module",
+  "description": "MemFlow - portable shared memory and prompt caching for coding agents",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*",
+    "assets/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./dist/index.js",
+    "./cli": "./dist/cli.js",
+    "./mcp": "./dist/mcp/server.js",
+    "./connectors": "./dist/connectors/index.js"
+  },
+  "bin": {
+    "memflow": "./dist/cli.js",
+    "memflow-mcp": "./dist/mcp/server.js"
+  },
+  "scripts": {
+    "prebuild": "node scripts/bump-patch.mjs",
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js dist/mcp/server.js",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test tests/**/*.test.mjs",
+    "migrate:ruflo": "npm run build && node scripts/import-ruflo.mjs",
+    "bootstrap:private-repo": "node scripts/bootstrap-private-repo.mjs",
+    "bootstrap:public-repo": "node scripts/bootstrap-public-repo.mjs",
+    "version:show": "npm run build && node dist/cli.js version",
+    "version:set": "node scripts/set-version.mjs",
+    "version:bump": "node scripts/bump-patch.mjs",
+    "release:check": "npm test && npm pack --dry-run"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "fastmcp": "^3.26.7",
+    "mongodb": "^6.16.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
