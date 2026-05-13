@@ -1,4 +1,5 @@
 import http from "node:http";
+import net from "node:net";
 import { URL } from "node:url";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, extname } from "node:path";
@@ -17,6 +18,59 @@ import type {
 export interface DashboardOptions {
   port?: number;
   configPath?: string;
+  /** If true, automatically increment the port until a free one is found. */
+  autoPort?: boolean;
+  /** How many ports to try before giving up. Defaults to 10. */
+  maxPortRetries?: number;
+}
+
+/**
+ * Probe whether a TCP port is available on localhost.
+ * Returns true when nothing is listening on that port.
+ */
+export function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.once("listening", () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, "127.0.0.1");
+  });
+}
+
+/**
+ * Kill whatever process is currently holding `port` on macOS/Linux.
+ * Uses `lsof` to find the PID, then sends SIGTERM (with SIGKILL fallback).
+ * Resolves once the port is free or the kill attempt finishes.
+ */
+export async function killPortOwner(port: number): Promise<void> {
+  const { execSync } = await import("node:child_process");
+  let pid: number | undefined;
+  try {
+    // lsof -ti TCP:<port> returns newline-separated PIDs
+    const raw = execSync(`lsof -ti TCP:${port}`, { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+    const firstPid = raw.split("\n")[0];
+    pid = firstPid ? parseInt(firstPid, 10) : undefined;
+  } catch {
+    // Nothing listening — port is already free
+    return;
+  }
+  if (!pid || isNaN(pid)) return;
+  try {
+    process.stderr.write(`Stopping existing dashboard process (PID ${pid}) on port ${port}…\n`);
+    execSync(`kill -TERM ${pid}`, { stdio: "ignore" });
+    // Give it up to 2 s to exit gracefully
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (await isPortFree(port)) return;
+    }
+    // Force-kill if still alive
+    execSync(`kill -KILL ${pid}`, { stdio: "ignore" });
+    await new Promise((r) => setTimeout(r, 200));
+  } catch {
+    // Process already gone
+  }
 }
 
 export function startDashboard(options: DashboardOptions = {}): http.Server {

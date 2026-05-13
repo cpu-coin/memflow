@@ -15,7 +15,7 @@ import { formatVersion, getVersionInfo } from "./version.js";
 import { buildHostBootstrap } from "./core/host.js";
 import { buildWorkflowWriteInput } from "./core/workflow-ingestion.js";
 import { collectDependencySnapshot, dependencyWarningsForEntry } from "./core/dependencies.js";
-import { startDashboard } from "./core/dashboard.js";
+import { startDashboard, killPortOwner } from "./core/dashboard.js";
 
 type MemoryScope = any;
 const DEFAULT_PROMPT_TIMEOUT_MS = 800;
@@ -1720,6 +1720,10 @@ export async function runCli(argv = process.argv.slice(2)) {
         : Number.isInteger(Number(asString(input, "port")))
           ? Number(asString(input, "port"))
           : 3000;
+
+    // Kill any stale dashboard already on this port, then start fresh.
+    await killPortOwner(port);
+
     const server = startDashboard({ port, configPath });
     process.stdout.write(`MemFlow dashboard running at http://localhost:${port}\n`);
     
