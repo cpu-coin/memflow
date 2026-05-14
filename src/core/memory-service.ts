@@ -1133,9 +1133,17 @@ export class MemoryService {
     metric: string;
     delta?: number;
   }): Promise<void> {
+    // Ensure every metric entry has a user so the dashboard never shows "unknown".
+    // Fall back to the OS user when the caller doesn't pass one in coordinates.
+    const resolvedUser = input.coordinates.user ?? process.env.USER ?? process.env.LOGNAME;
+    const enrichedCoordinates: MemoryCoordinates = {
+      ...input.coordinates,
+      user: resolvedUser,
+    };
+
     const key = buildOperationalMetricKey({
       coordinates: {
-        ...input.coordinates,
+        ...enrichedCoordinates,
         namespace: METRICS_NAMESPACE,
       },
       metric: input.metric,
@@ -1156,7 +1164,7 @@ export class MemoryService {
       title: `Metric ${input.metric}`,
       content: `Operational metric ${input.metric} count ${count}`,
       coordinates: {
-        ...input.coordinates,
+        ...enrichedCoordinates,
         namespace: METRICS_NAMESPACE,
       },
       kind: "knowledge",
