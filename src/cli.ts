@@ -12,6 +12,7 @@ import { MemoryService } from "./core/memory-service.js";
 import { importLegacyRufloSetup } from "./migrations/memflow.js";
 import { formatVersion, getVersionInfo } from "./version.js";
 import { SecuritySweepEngine } from "./core/security-sweep.js";
+import { runDocsVerify, installPreCommitHook } from "./core/docs-autofill.js";
 
 import { buildHostBootstrap } from "./core/host.js";
 import { buildWorkflowWriteInput } from "./core/workflow-ingestion.js";
@@ -89,6 +90,8 @@ function printHelp() {
         "  join               Upgrade to a shared MongoDB instance (accepts URI or invite token)",
         "  invite             Generate a shareable invite link/token for team onboarding",
         "  security:audit        Scan all stored database entries for sensitive data",
+        "  docs:verify           Scan staged files and verify/autofill missing documentation blocks",
+        "  hook:install          Install MemFlow's pre-commit auto-documentation hook in the repository",
         "  security:sweep        Show current security sweep settings",
         "  security:sweep:enable    Enable the security sweep",
         "  security:sweep:disable   Disable the security sweep",
@@ -1070,6 +1073,54 @@ export async function runCli(argv = process.argv.slice(2)) {
 
     if (command === "security:audit" || command === "security:sweep:audit") {
       return runSecurityAuditCommand(configPath, input);
+    }
+
+    if (command === "docs:verify" || command === "docs:audit") {
+      const result = await runDocsVerify(process.cwd());
+      if (input.json) {
+        printJson(result);
+        return 0;
+      }
+      
+      const preCommitMode = argv.includes("--pre-commit");
+      
+      if (result.checked.length === 0) {
+        if (!preCommitMode) {
+          process.stdout.write("ℹ No staged JS/TS source files found to check.\n");
+        }
+        return 0;
+      }
+      
+      if (result.updated.length === 0) {
+        if (!preCommitMode) {
+          process.stdout.write(`✅ Verified ${result.checked.length} staged file(s). All documentation meets standards.\n`);
+        }
+        return 0;
+      }
+      
+      process.stdout.write(`✨ MemFlow Auto-Doc: Verified ${result.checked.length} file(s), identified lacking documentation.\n`);
+      for (const item of result.details) {
+        process.stdout.write(`  📝 Updated file: ${item.file}\n`);
+        if (item.injectedHeader) {
+          process.stdout.write(`     ↳ Injected missing file module header\n`);
+        }
+        for (const name of item.injectedItems) {
+          process.stdout.write(`     ↳ Injected JSDoc block for function: ${name}\n`);
+        }
+      }
+      process.stdout.write(`✅ Successfully injected and re-staged ${result.changesCount} documentation blocks!\n`);
+      return 0;
+    }
+
+    if (command === "hook:install" || command === "hooks:install") {
+      const success = installPreCommitHook(process.cwd());
+      if (success) {
+        process.stdout.write("✅ MemFlow pre-commit documentation verification hook installed successfully!\n");
+        return 0;
+      } else {
+        process.stderr.write("❌ Failed to install hook. Make sure you are in the root directory of a git repository.\n");
+        return 1;
+      }
     }
 
     if (command === "security:sweep") {

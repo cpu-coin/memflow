@@ -32,6 +32,9 @@ the same MCP surface in each.
 
 ## Core Features
 
+### Agent Personas (Profiles)
+Store and load customized instructions, preferences, and operational rules for your AI agents at the user, workspace, project, or repository level. MemFlow automatically seeds default personas during setup, instructing agents on optimal memory preservation, bug-fix pattern promotion, and concise execution styles. These profiles are automatically loaded into context at the start of each session via `memory_profile_load`.
+
 ### Memory CRUD
 Store, search, retrieve, list, and delete structured memory entries scoped by
 namespace, project, repository, and workspace. All entries carry provenance,
