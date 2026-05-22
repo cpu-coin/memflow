@@ -1,6 +1,8 @@
 # MemFlow™
 
-MemFlow™ is a portable shared-memory layer for coding agents.
+**[→ What is MemFlow? Read the About page](./ABOUT.md)**
+
+MemFlow™ is a portable shared-memory layer for AI coding agents.
 
 Its purpose is narrow:
 - store and retrieve useful development knowledge across sessions
@@ -28,6 +30,21 @@ Working product statement:
 Current stable release target:
 
 - `1.0.0`
+
+## Overview
+
+MemFlow's current public feature set is intentionally small:
+
+- local-first memory CRUD
+- prompt-cache read and write support
+- deterministic import, export, and merge
+- SQLite and MongoDB backends
+- legacy RuFlo import
+- namespace and project scoping
+- security sweep on write operations
+- fixed MCP tool allowlist
+- versioned CLI and release checks
+- **mobile bridge (ag_bridge) pattern** — two dedicated MCP tools (`mobile_read_inbox`, `mobile_respond`) that power headless mobile-to-agent communication with no CDP or Accessibility permissions required
 
 ## Founding Context
 
@@ -222,6 +239,7 @@ Version metadata can surface GitHub release context through:
 
 ## Documents
 
+- [ABOUT.md](./ABOUT.md) — what MemFlow is, who it's for, and how it works
 - [SPEC.md](./SPEC.md)
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
 - [MCP.md](./MCP.md)
@@ -229,12 +247,15 @@ Version metadata can surface GitHub release context through:
 - [SECURITY.md](./SECURITY.md)
 - [CHANGELOG.md](./CHANGELOG.md)
 - [RELEASE.md](./RELEASE.md)
+- [docs/ag-bridge.md](./docs/ag-bridge.md)
+- [docs/mobile-bridge-pattern.md](./docs/mobile-bridge-pattern.md)
 - [docs/claude-code-adoption.md](./docs/claude-code-adoption.md)
 - [docs/codex-mcp-adoption.md](./docs/codex-mcp-adoption.md)
 - [docs/vscode-mcp-adoption.md](./docs/vscode-mcp-adoption.md)
+- [docs/chatgpt-openai-desktop.md](./docs/chatgpt-openai-desktop.md)
 - [docs/trust-model.md](./docs/trust-model.md)
 - [docs/local-first-scaling.md](./docs/local-first-scaling.md)
 - [docs/developer-quickstart.md](./docs/developer-quickstart.md)
 - [docs/startup-audit.md](./docs/startup-audit.md)
 - [docs/import-export-examples.md](./docs/import-export-examples.md)
-- [docs/mobile-bridge-pattern.md](./docs/mobile-bridge-pattern.md)
+- [docs/openclaw-mcp-setup.md](./docs/openclaw-mcp-setup.md)

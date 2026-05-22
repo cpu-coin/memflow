@@ -4,6 +4,24 @@ All notable changes to MemFlow should be recorded in this file.
 
 The format is based on Keep a Changelog and uses semantic versioning.
 
+## [Unreleased]
+
+### Added
+
+- `mobile_read_inbox` MCP tool — reads pending messages from the `ag_bridge/inbox` namespace
+- `mobile_respond` MCP tool — writes agent responses to the `ag_bridge/outbox` namespace
+- `docs/ag-bridge.md` — full public documentation for the ag_bridge integration pattern, capability boundaries, and security model
+- ag_bridge integration guidance in `docs/mobile-bridge-pattern.md` updated with MCP tool references
+
+### Fixed
+
+- `migration_export.json` was corrupted (contained CLI help output); replaced with empty `{}`
+
+### Security
+
+- Confirmed `migration_export.json` contains no private data
+- `SECURITY.md` updated to include Security Sweep Engine documentation (runtime PII/key detection on all write tools)
+
 ## [1.0.0] - 2026-04-30
 
 First stable release.
