@@ -430,6 +430,21 @@ export async function runGuidedInstall(
         ? config.automation.enabled
         : /^(y|yes)$/i.test(automationAnswer.trim());
 
+    process.stdout.write(
+      section("Security and Privacy Sweep", [
+        "MemFlow includes an automatic security sweep that blocks or redacts credentials (API keys, private keys, database passwords) before they are stored or leaked to external AI models.",
+        "It can also detect PII (Social Security Numbers, Credit Cards, Emails). Since email scanning can sometimes flag standard code addresses, PII scanning is off by default.",
+      ])
+    );
+    const piiDefault = existing.securitySweep?.rules?.pii ?? false;
+    const piiAnswer = await rl.question(
+      `Enable automatic PII (emails, SSNs, credit cards) detection? [${piiDefault ? "Y/n" : "y/N"}]: `
+    );
+    const enablePii =
+      piiAnswer.trim() === ""
+        ? piiDefault
+        : /^(y|yes)$/i.test(piiAnswer.trim());
+
     const nextConfig = writeMemFlowConfig(
       {
         ...config,
@@ -440,6 +455,13 @@ export async function runGuidedInstall(
           autoPromptCache: enableAutomation,
           enabled: enableAutomation,
           metrics: enableAutomation,
+        },
+        securitySweep: {
+          ...(config.securitySweep ?? { enabled: true, level: "warn" }),
+          rules: {
+            ...(config.securitySweep?.rules ?? { privateKeys: true, apiKeys: true, databaseUris: true }),
+            pii: enablePii,
+          },
         },
       },
       configPath

@@ -552,6 +552,19 @@ export interface MemFlowMongoConfig {
   moduleSearchPaths?: string[];
 }
 
+export interface SecuritySweepConfig {
+  enabled: boolean;
+  level: "block" | "redact" | "warn";
+  rules?: {
+    privateKeys?: boolean;
+    apiKeys?: boolean;
+    databaseUris?: boolean;
+    pii?: boolean;
+  };
+  customPatterns?: Array<{ name: string; regex: string }>;
+  trustedNamespaces?: string[];
+}
+
 export interface MemFlowConfig {
   version: "1";
   profile?: string;
@@ -576,7 +589,9 @@ export interface MemFlowConfig {
   tenant?: string;
   user?: string;
   workspace?: string;
+  securitySweep?: SecuritySweepConfig;
 }
+
 
 export interface PromptCacheStoreInput {
   key: string;

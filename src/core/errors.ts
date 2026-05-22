@@ -10,3 +10,5 @@ export class InvalidMemoryInputError extends MemFlowError {}
 export class ConnectorNotReadyError extends MemFlowError {}
 
 export class UnsupportedConnectorOperationError extends MemFlowError {}
+
+export class SecuritySweepBlockError extends MemFlowError {}

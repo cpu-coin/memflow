@@ -74,6 +74,17 @@ export function createDefaultConfig(): MemFlowConfig {
     trackedProjects: [],
     user: process.env.USER,
     workspace: process.cwd(),
+    securitySweep: {
+      enabled: true,
+      level: "warn",
+      rules: {
+        privateKeys: true,
+        apiKeys: true,
+        databaseUris: true,
+        pii: false,
+      },
+      trustedNamespaces: [],
+    },
   };
 }
 
@@ -111,13 +122,25 @@ export function readMemFlowConfig(configPath: string = getDefaultConfigPath()): 
     trackedProjects: Array.isArray(parsed.trackedProjects)
       ? parsed.trackedProjects.map((project) => normalizeTrackedProject(project))
       : [],
+    securitySweep: parsed.securitySweep
+      ? {
+          enabled: parsed.securitySweep.enabled ?? defaults.securitySweep!.enabled,
+          level: parsed.securitySweep.level ?? defaults.securitySweep!.level,
+          rules: {
+            ...defaults.securitySweep!.rules,
+            ...(parsed.securitySweep.rules ?? {}),
+          },
+          customPatterns: parsed.securitySweep.customPatterns ?? defaults.securitySweep!.customPatterns,
+          trustedNamespaces: parsed.securitySweep.trustedNamespaces ?? defaults.securitySweep!.trustedNamespaces,
+        }
+      : defaults.securitySweep,
   };
 }
 
 export function writeMemFlowConfig(
   config: MemFlowConfig,
   configPath: string = getDefaultConfigPath()
-): MemFlowConfig {
+ ): MemFlowConfig {
   const profile = config.profile ?? getProfileName();
   const normalized: MemFlowConfig = {
     ...createDefaultConfig(),
@@ -131,6 +154,15 @@ export function writeMemFlowConfig(
     trackedProjects: [...config.trackedProjects]
       .map((project) => normalizeTrackedProject(project))
       .sort((left, right) => left.name.localeCompare(right.name)),
+    securitySweep: config.securitySweep
+      ? {
+          enabled: config.securitySweep.enabled,
+          level: config.securitySweep.level,
+          rules: config.securitySweep.rules,
+          customPatterns: config.securitySweep.customPatterns,
+          trustedNamespaces: config.securitySweep.trustedNamespaces,
+        }
+      : undefined,
   };
 
   mkdirSync(dirname(configPath), { recursive: true });

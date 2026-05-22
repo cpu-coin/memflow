@@ -12,7 +12,10 @@ const coordinatesSchema = z.object({
   tenant: z.string().min(1).optional(),
   user: z.string().min(1).optional(),
   workspace: z.string().min(1).optional(),
+  /** Set true to explicitly allow sensitive content through the security sweep for this request. */
+  bypassSecuritySweep: z.boolean().optional(),
 });
+
 
 const provenanceSchema = z.object({
   actorId: z.string().min(1).optional(),
@@ -547,4 +550,93 @@ export function registerMemoryTools(server: {
         asJson(await service.exportBySyncTarget(target, query, policy))
       ),
   });
+
+  // --- AG Bridge Mobile Tools ---
+  // These two tools close the mobile ↔ agent response loop via MemFlow as the bus.
+  // The ag_bridge server writes mobile messages to ag_bridge/inbox and polls
+  // ag_bridge/outbox every 5s to relay agent responses back to the mobile UI.
+
+  server.addTool({
+    name: "mobile_read_inbox",
+    description: `Read pending messages sent from the mobile device to the agent.
+Call this when you see a [Mobile] prefix on a message, or when you want to check
+for new mobile requests. Returns unread messages from the ag_bridge inbox.
+Always call mobile_respond after processing a mobile message.`,
+    parameters: z.object({
+      project: z.string().min(1).optional().describe("Filter by project name"),
+      limit: z.number().int().positive().max(50).optional().describe("Max messages to return (default 10)"),
+    }),
+    execute: async ({ project, limit }) =>
+      guard.run("mobile_read_inbox", { project, limit }, async () => {
+        const entries: any[] = await service.list({
+          namespace: "ag_bridge/inbox",
+          tags: ["pending"],
+          ...(project ? { project } : {}),
+          limit: limit ?? 10,
+        });
+        // Mark as read by swapping "pending" tag to "read"
+        for (const entry of entries) {
+          await service.upsert({
+            ...entry,
+            tags: Array.isArray(entry.tags)
+              ? entry.tags.map((t: string) => t === "pending" ? "read" : t)
+              : ["read"],
+          }).catch(() => {});
+        }
+        return asJson({
+          ok: true,
+          count: entries.length,
+          messages: entries.map((e: any) => ({
+            id: e.id,
+            text: e.content,
+            from: e.metadata?.from ?? "user",
+            project: e.metadata?.project ?? project ?? "global",
+            sentAt: e.metadata?.mobileTimestamp ?? e.createdAt,
+          })),
+        });
+      }),
+  });
+
+  server.addTool({
+    name: "mobile_respond",
+    description: `Send a response back to the mobile device.
+Call this after handling a mobile message to send your reply to the user's phone.
+The ag_bridge server polls for these responses every 5 seconds and displays them
+in the mobile UI. Always include the project context when available.`,
+    parameters: z.object({
+      message: z.string().min(1).describe("The response text to send to mobile"),
+      project: z.string().min(1).optional().describe("Project context for the response"),
+      inReplyTo: z.string().min(1).optional().describe("ID of the mobile message being replied to"),
+    }),
+    execute: async ({ message, project, inReplyTo }) =>
+      guard.run("mobile_respond", { message, project, inReplyTo }, async () => {
+        const msgId = `resp_${Date.now().toString(36)}`;
+        const now = new Date().toISOString();
+        const result = await service.upsert({
+          key: `ag_bridge/outbox/${msgId}`,
+          title: `Mobile response ${msgId}`,
+          content: message,
+          coordinates: {
+            namespace: "ag_bridge/outbox",
+            scope: "workspace",
+            ...(project ? { project } : {}),
+          },
+          kind: "knowledge",
+          tags: ["agent-response", "unread", "ag_bridge", ...(project ? [project] : [])],
+          metadata: {
+            msgId,
+            from: "agent",
+            to: "user",
+            channel: "work",
+            timestamp: now,
+            status: "unread",
+            project: project ?? "global",
+            inReplyTo: inReplyTo ?? null,
+          },
+          provenance: { source: "agent", actorId: "antigravity" },
+        });
+        return asJson({ ok: true, msgId, method: "memflow_outbox", result });
+      }),
+  });
 }
+

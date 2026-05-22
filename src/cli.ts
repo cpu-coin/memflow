@@ -11,6 +11,7 @@ import { createConnectorFromEnvironment, startServer } from "./mcp/server.js";
 import { MemoryService } from "./core/memory-service.js";
 import { importLegacyRufloSetup } from "./migrations/memflow.js";
 import { formatVersion, getVersionInfo } from "./version.js";
+import { SecuritySweepEngine } from "./core/security-sweep.js";
 
 import { buildHostBootstrap } from "./core/host.js";
 import { buildWorkflowWriteInput } from "./core/workflow-ingestion.js";
@@ -87,6 +88,15 @@ function printHelp() {
         "  migrate:ruflo     Detect and import a prior local RuFlo setup",
         "  join               Upgrade to a shared MongoDB instance (accepts URI or invite token)",
         "  invite             Generate a shareable invite link/token for team onboarding",
+        "  security:audit        Scan all stored database entries for sensitive data",
+        "  security:sweep        Show current security sweep settings",
+        "  security:sweep:enable    Enable the security sweep",
+        "  security:sweep:disable   Disable the security sweep",
+        "  security:sweep:level     Set enforcement level: warn | redact | block  (--level <value>)",
+        "  security:sweep:rules     Toggle detection rules: --private-keys, --api-keys, --db-uris, --pii  (on|off)",
+        "  security:sweep:trusted  List current exempt namespaces from security sweeps",
+        "  security:sweep:trusted:add --namespace <ns>  Exempt a namespace from security sweeps",
+        "  security:sweep:trusted:remove --namespace <ns>  Remove a namespace from exemption",
         "",
         "Flags:",
         "  -v, --version     Show version",
@@ -320,6 +330,7 @@ function formatDoctor(data: any): string {
   const stats = data.stats ?? {};
   const auto = data.automation ?? {};
   const tp = data.trackedProjects ?? {};
+  const ss = data.config?.securitySweep ?? { enabled: false, level: "warn" };
   const lines = [
     "",
     "MemFlow Doctor",
@@ -338,6 +349,10 @@ function formatDoctor(data: any): string {
     `    Metrics:           ${auto.metrics ? "yes" : "no"}`,
     "",
     `  Projects: ${tp.total ?? 0} tracked (${tp.enabled ?? 0} enabled, ${tp.disabled ?? 0} disabled)`,
+    "",
+    `  Security Sweep: ${ss.enabled ? "enabled" : "disabled"}`,
+    `    Level:             ${ss.level ?? "warn"}`,
+    `    Rules:             private keys (${ss.rules?.privateKeys !== false ? "on" : "off"}), api keys (${ss.rules?.apiKeys !== false ? "on" : "off"}), db URIs (${ss.rules?.databaseUris !== false ? "on" : "off"}), PII (${ss.rules?.pii === true ? "on" : "off"})`,
     "",
   ];
   return lines.join("\n");
@@ -1051,6 +1066,187 @@ export async function runCli(argv = process.argv.slice(2)) {
 
     if (command === "invite") {
       return runInviteCommand(configPath);
+    }
+
+    if (command === "security:audit" || command === "security:sweep:audit") {
+      return runSecurityAuditCommand(configPath, input);
+    }
+
+    if (command === "security:sweep") {
+      const config = readMemFlowConfig(configPath);
+      const ss = config.securitySweep ?? { enabled: true, level: "warn", rules: { privateKeys: true, apiKeys: true, databaseUris: true, pii: false } };
+      if (input.json) {
+        printJson(ss);
+      } else {
+        process.stdout.write([
+          "",
+          "Security Sweep Settings",
+          "══════════════════════════════════════",
+          `  Status:             ${ss.enabled ? "✅ enabled" : "❌ disabled"}`,
+          `  Level:              ${ss.level ?? "warn"}`,
+          `  Rules:`,
+          `    Private Keys:     ${ss.rules?.privateKeys !== false ? "on" : "off"}`,
+          `    API Keys:         ${ss.rules?.apiKeys !== false ? "on" : "off"}`,
+          `    Database URIs:    ${ss.rules?.databaseUris !== false ? "on" : "off"}`,
+          `    PII:              ${ss.rules?.pii === true ? "on" : "off"}`,
+          `  Custom Patterns:    ${ss.customPatterns?.length ?? 0}`,
+          `  Trusted Namespaces: ${ss.trustedNamespaces?.join(", ") || "(None)"}`,
+          "",
+          "  Commands:",
+          "    memflow security:audit",
+          "    memflow security:sweep:enable",
+          "    memflow security:sweep:disable",
+          "    memflow security:sweep:level --level warn|redact|block",
+          "    memflow security:sweep:rules --api-keys off --pii on",
+          "    memflow security:sweep:trusted",
+          "    memflow security:sweep:trusted:add --namespace <ns>",
+          "    memflow security:sweep:trusted:remove --namespace <ns>",
+          "",
+        ].join("\n"));
+      }
+      return 0;
+    }
+
+    if (command === "security:sweep:trusted") {
+      const config = readMemFlowConfig(configPath);
+      const trusted = config.securitySweep?.trustedNamespaces ?? [];
+      if (input.json) {
+        printJson(trusted);
+      } else {
+        process.stdout.write([
+          "",
+          "Trusted Namespaces (Exempt from Security Sweeps)",
+          "═══════════════════════════════════════════════════",
+          ...(trusted.length > 0
+            ? trusted.map((ns) => `  • ${ns}`)
+            : ["  (None)"]),
+          "",
+          "Commands to manage:",
+          "  memflow security:sweep:trusted:add --namespace <ns>",
+          "  memflow security:sweep:trusted:remove --namespace <ns>",
+          "",
+        ].join("\n"));
+      }
+      return 0;
+    }
+
+    if (command === "security:sweep:trusted:add") {
+      const ns = asString(input, "namespace");
+      if (!ns) {
+        process.stderr.write("Error: --namespace <name> is required.\n");
+        return 1;
+      }
+      const config = readMemFlowConfig(configPath);
+      const current = config.securitySweep ?? { enabled: true, level: "warn", rules: {}, trustedNamespaces: [] };
+      const trusted = Array.isArray(current.trustedNamespaces) ? [...current.trustedNamespaces] : [];
+      if (trusted.includes(ns)) {
+        process.stdout.write(`Namespace '${ns}' is already trusted.\n`);
+        return 0;
+      }
+      trusted.push(ns);
+      writeMemFlowConfig({
+        ...config,
+        securitySweep: {
+          ...current,
+          trustedNamespaces: trusted,
+        },
+      }, configPath);
+      process.stdout.write(`✅ Namespace '${ns}' has been added to trusted namespaces.\n`);
+      return 0;
+    }
+
+    if (command === "security:sweep:trusted:remove") {
+      const ns = asString(input, "namespace");
+      if (!ns) {
+        process.stderr.write("Error: --namespace <name> is required.\n");
+        return 1;
+      }
+      const config = readMemFlowConfig(configPath);
+      const current = config.securitySweep ?? { enabled: true, level: "warn", rules: {}, trustedNamespaces: [] };
+      const trusted = Array.isArray(current.trustedNamespaces) ? [...current.trustedNamespaces] : [];
+      if (!trusted.includes(ns)) {
+        process.stdout.write(`Namespace '${ns}' is not in trusted namespaces.\n`);
+        return 0;
+      }
+      const nextTrusted = trusted.filter((item) => item !== ns);
+      writeMemFlowConfig({
+        ...config,
+        securitySweep: {
+          ...current,
+          trustedNamespaces: nextTrusted,
+        },
+      }, configPath);
+      process.stdout.write(`✅ Namespace '${ns}' has been removed from trusted namespaces.\n`);
+      return 0;
+    }
+
+    if (command === "security:sweep:enable") {
+      const config = readMemFlowConfig(configPath);
+      writeMemFlowConfig({
+        ...config,
+        securitySweep: { ...(config.securitySweep ?? { level: "warn", rules: {} }), enabled: true },
+      }, configPath);
+      process.stdout.write("✅ Security sweep enabled.\n");
+      return 0;
+    }
+
+    if (command === "security:sweep:disable") {
+      const config = readMemFlowConfig(configPath);
+      writeMemFlowConfig({
+        ...config,
+        securitySweep: { ...(config.securitySweep ?? { level: "warn", rules: {} }), enabled: false },
+      }, configPath);
+      process.stdout.write("⚠️  Security sweep disabled. Sensitive credentials will no longer be detected.\n");
+      return 0;
+    }
+
+    if (command === "security:sweep:level") {
+      const level = asString(input, "level") as "warn" | "redact" | "block" | undefined;
+      if (!level || !["warn", "redact", "block"].includes(level)) {
+        process.stderr.write("Error: --level must be one of: warn, redact, block\n");
+        process.stderr.write("  warn   — warn in tool response but allow storage (default)\n");
+        process.stderr.write("  redact — auto-redact sensitive data before storage\n");
+        process.stderr.write("  block  — reject any request containing sensitive data\n");
+        return 1;
+      }
+      const config = readMemFlowConfig(configPath);
+      writeMemFlowConfig({
+        ...config,
+        securitySweep: { ...(config.securitySweep ?? { enabled: true, rules: {} }), level },
+      }, configPath);
+      process.stdout.write(`✅ Security sweep level set to: ${level}\n`);
+      return 0;
+    }
+
+    if (command === "security:sweep:rules") {
+      const config = readMemFlowConfig(configPath);
+      const existing = config.securitySweep ?? { enabled: true, level: "warn", rules: {} };
+      const existingRules = existing.rules ?? {};
+      const resolveToggle = (flag: string, current?: boolean): boolean => {
+        const val = asString(input, flag);
+        if (val === "on" || val === "true") return true;
+        if (val === "off" || val === "false") return false;
+        return current ?? true;
+      };
+      const newRules = {
+        privateKeys: resolveToggle("private-keys", existingRules.privateKeys),
+        apiKeys: resolveToggle("api-keys", existingRules.apiKeys),
+        databaseUris: resolveToggle("db-uris", existingRules.databaseUris),
+        pii: resolveToggle("pii", existingRules.pii ?? false),
+      };
+      writeMemFlowConfig({
+        ...config,
+        securitySweep: { ...existing, rules: newRules },
+      }, configPath);
+      process.stdout.write([
+        "✅ Security sweep rules updated:",
+        `  private-keys: ${newRules.privateKeys ? "on" : "off"}`,
+        `  api-keys:     ${newRules.apiKeys ? "on" : "off"}`,
+        `  db-uris:      ${newRules.databaseUris ? "on" : "off"}`,
+        `  pii:          ${newRules.pii ? "on" : "off"}`,
+        "",
+      ].join("\n"));
+      return 0;
     }
   if (command === "init") {
     const preflight = await runRuntimePreflight(configPath);
@@ -2256,6 +2452,96 @@ async function runJoinCommand(
   ].filter(Boolean).join("\n"));
 
   return 0;
+}
+
+async function runSecurityAuditCommand(configPath: string, input: Record<string, any>): Promise<number> {
+  const service = new MemoryService(createConnectorFromEnvironment(configPath));
+  const entries = await service.list({ limit: 10000 });
+  const config = readMemFlowConfig(configPath);
+  const sweepConfig = {
+    ...(config.securitySweep ?? { level: "warn", rules: { privateKeys: true, apiKeys: true, databaseUris: true, pii: false } }),
+    enabled: true, // Force enabled for audit command
+  };
+  const sweepEngine = new SecuritySweepEngine(sweepConfig);
+
+  const findings: Array<{
+    id: string;
+    key: string;
+    namespace: string;
+    kind: string;
+    matches: Array<{ type: string; text: string }>;
+  }> = [];
+
+  for (const entry of entries) {
+    const titleRes = sweepEngine.sweep(entry.title);
+    const contentRes = sweepEngine.sweep(entry.content);
+
+    const matchesMap = new Map<string, string>();
+    if (titleRes.hasMatches) {
+      for (const m of titleRes.matches) {
+        matchesMap.set(m.type + ":" + m.text, m.text);
+      }
+    }
+    if (contentRes.hasMatches) {
+      for (const m of contentRes.matches) {
+        matchesMap.set(m.type + ":" + m.text, m.text);
+      }
+    }
+
+    if (matchesMap.size > 0) {
+      const entryMatches = Array.from(matchesMap.entries()).map(([key, text]) => {
+        const type = key.split(":")[0];
+        return { type, text };
+      });
+
+      findings.push({
+        id: entry.id,
+        key: entry.key,
+        namespace: entry.namespace,
+        kind: entry.kind,
+        matches: entryMatches,
+      });
+    }
+  }
+
+  if (input.json === "true" || input.json === true || !process.stdout.isTTY) {
+    printJson({
+      scannedCount: entries.length,
+      findingsCount: findings.length,
+      findings,
+    });
+  } else {
+    process.stdout.write([
+      "",
+      "MemFlow Security Audit Summary",
+      "══════════════════════════════════════",
+      `  Total Entries Scanned: ${entries.length}`,
+      `  Sensitive Entries Found: ${findings.length}`,
+      "",
+    ].join("\n"));
+
+    if (findings.length > 0) {
+      process.stdout.write("Findings Details:\n");
+      for (const f of findings) {
+        process.stdout.write([
+          `  • Entry Key: ${f.key} (ID: ${f.id})`,
+          `    Namespace: ${f.namespace} | Kind: ${f.kind}`,
+          `    Detected Secrets:`,
+          ...f.matches.map((m) => `      - [${m.type}]: ${m.text}`),
+          "",
+        ].join("\n"));
+      }
+      process.stdout.write([
+        "⚠️  WARNING: The above secrets/sensitive data were found in your local database.",
+        "Consider deleting or redacting these entries, or whitelisting their namespaces.",
+        "",
+      ].join("\n"));
+    } else {
+      process.stdout.write("✅ No secrets or sensitive data found in stored memories.\n\n");
+    }
+  }
+
+  return findings.length > 0 ? 1 : 0;
 }
 
 async function runInviteCommand(configPath: string): Promise<number> {
