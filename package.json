@@ -1,6 +1,6 @@
 {
   "name": "memflow",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "type": "module",
   "description": "MemFlow - portable shared memory and prompt caching for coding agents",
   "license": "MIT",
