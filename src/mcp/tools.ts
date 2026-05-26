@@ -568,10 +568,13 @@ Always call mobile_respond after processing a mobile message.`,
     }),
     execute: async ({ project, limit }) =>
       guard.run("mobile_read_inbox", { project, limit }, async () => {
+        if (!project) {
+          throw new Error("project parameter is required to prevent cross-project message theft.");
+        }
         const entries: any[] = await service.list({
           namespace: "ag_bridge/inbox",
           tags: ["pending"],
-          ...(project ? { project } : {}),
+          project,
           limit: limit ?? 10,
         });
         // Mark as read by swapping "pending" tag to "read"
@@ -590,7 +593,7 @@ Always call mobile_respond after processing a mobile message.`,
             id: e.id,
             text: e.content,
             from: e.metadata?.from ?? "user",
-            project: e.metadata?.project ?? project ?? "global",
+            project: e.metadata?.project ?? project,
             sentAt: e.metadata?.mobileTimestamp ?? e.createdAt,
           })),
         });
