@@ -135,10 +135,6 @@ Your agent (if idle and checking its inbox) will pick it up on the next
 All actual work is performed by the AI agent connected to MemFlow via MCP. `ag_bridge`
 is strictly a communication bridge — it moves messages in and out of MemFlow, nothing more.
 
-## Community Implementations
-
-- [Damn Antigravity IDE Migrator](./community/antigravity-ide-migrator-macos/README.md) — community tool for migrating Antigravity workspaces (referenced in the MemFlow community folder)
-
 ## Related Documents
 
 - [Mobile Bridge Pattern](./mobile-bridge-pattern.md) — general pattern documentation

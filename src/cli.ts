@@ -25,6 +25,20 @@ async function withTimeout(promise: any, ms: number, fallback: any) {
     const timeout = new Promise((resolve) => setTimeout(() => resolve(fallback), ms));
     return Promise.race([promise, timeout]);
 }
+
+const openServices = new Set<MemoryService>();
+
+function createMemoryService(configPath: string): MemoryService {
+    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    openServices.add(service);
+    return service;
+}
+
+async function closeOpenServices() {
+    const services = [...openServices];
+    openServices.clear();
+    await Promise.allSettled(services.map((service) => service.close()));
+}
 function printHelp() {
     process.stdout.write([
         "MemFlow CLI",
@@ -944,7 +958,7 @@ async function readStatusState(configPath: string, cwd = process.cwd(), includeH
         );
     }
     try {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const connector = await service.health();
         return buildStatusPayload(connector, config, cwd, {
             activeRecent: false,
@@ -1305,7 +1319,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       printJson(preflight);
       return 1;
         }
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
     const shouldRunGuidedSetup =
       process.stdin.isTTY &&
       flags.stdin !== true &&
@@ -1346,7 +1360,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         const already = findTrackedProjectForPath(config.trackedProjects, cwd);
         if (!already) {
             const merged = mergeTrackedProjects(config.trackedProjects, [{ path: cwd, enabled: true }]);
-            const service = new MemoryService(createConnectorFromEnvironment(configPath));
+            const service = createMemoryService(configPath);
             const nextConfig = writeMemFlowConfig({
                 ...config,
                 trackedProjects: merged,
@@ -1390,7 +1404,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         }
         const cwd = resolve(process.cwd());
         const projectName = basename(cwd);
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const config = readMemFlowConfig(configPath);
         if (!hasCompletedGuidedSetup(config)) {
             if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -1414,7 +1428,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         return 0;
     }
     if (command === "doctor") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const config = readMemFlowConfig(configPath);
         const doctorData = {
             config,
@@ -1436,7 +1450,9 @@ export async function runCli(argv = process.argv.slice(2)) {
         return 0;
     }
     if (command === "status") {
-        const statusData = await readStatusState(configPath, process.cwd());
+        const statusData =
+            (await withTimeout(readStatusState(configPath, process.cwd()), DEFAULT_PROMPT_TIMEOUT_MS, null)) ??
+            (await readStatusState(configPath, process.cwd(), false));
         printHuman(statusData, formatStatus, input.json);
         return 0;
     }
@@ -1467,7 +1483,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         return 0;
     }
     if (command === "restart") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const config = readMemFlowConfig(configPath);
         // Toggle and health check
         writeMemFlowConfig({
@@ -1488,15 +1504,15 @@ export async function runCli(argv = process.argv.slice(2)) {
         const status = await withTimeout(readStatusState(configPath, process.cwd(), false), DEFAULT_PROMPT_TIMEOUT_MS, null);
         if (!status) {
             process.stdout.write("MemFlow:Slow NoProject Shared Auto:Off\n");
-            process.exit(0);
+            return 0;
         }
         process.stdout.write(`${formatStatusIndicator(status)}\n`);
-        process.exit(0);
+        return 0;
     }
     if (command === "status:claude-code") {
         const config = readMemFlowConfig(configPath);
         try {
-            const service = new MemoryService(createConnectorFromEnvironment(configPath));
+            const service = createMemoryService(configPath);
             const cwd = process.cwd();
             const currentProject = findTrackedProjectForPath(config.trackedProjects, cwd);
             // Wrap the heavy metrics call in a timeout
@@ -1508,7 +1524,7 @@ export async function runCli(argv = process.argv.slice(2)) {
             }), DEFAULT_PROMPT_TIMEOUT_MS, null);
             if (!metrics) {
                 process.stdout.write(`on=true tracked=${currentProject?.enabled ?? false} active=false action=timeout\n`);
-                process.exit(0);
+                return 0;
             }
             // Derive last meaningful action (skip noise metrics)
             const SKIP = new Set(["cache_miss", "embedding_backfill"]);
@@ -1532,15 +1548,15 @@ export async function runCli(argv = process.argv.slice(2)) {
             if (compactions > 0)
                 parts.push(`compact=${compactions}`);
             process.stdout.write(parts.join(" ") + "\n");
-            process.exit(0);
+            return 0;
         }
         catch {
             process.stdout.write("on=false\n");
-            process.exit(0);
+            return 0;
         }
     }
     if (command === "memory_status") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const health = await service.health();
         const metrics = await service.metrics({ days: 1, limit: 20 });
         const msData = {
@@ -1552,7 +1568,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         return 0;
     }
     if (command === "validate") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const workspace = asString(input, "workspace", resolve(process.cwd())) ?? resolve(process.cwd());
         const snapshot = collectDependencySnapshot(workspace);
         const entries = await service.list({
@@ -1581,8 +1597,8 @@ export async function runCli(argv = process.argv.slice(2)) {
         return 0;
     }
     if (command === "metrics") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
-        const metricsData = await service.metrics({
+        const service = createMemoryService(configPath);
+        const metricsData = await withTimeout(service.metrics({
             project: asString(input, "project"),
             repo: asString(input, "repo"),
             scope: asString(input, "scope"),
@@ -1591,12 +1607,12 @@ export async function runCli(argv = process.argv.slice(2)) {
             workspace: asString(input, "workspace"),
             days: typeof input.days === "number" ? input.days : undefined,
             limit: typeof input.limit === "number" ? input.limit : undefined,
-        });
+        }), DEFAULT_PROMPT_TIMEOUT_MS, { recent: [], totals: {}, estimate: { timeMs: { net: 0 }, tokens: { net: 0 } } });
         printHuman(metricsData, formatMetrics, input.json);
         return 0;
     }
     if (command === "ingest:workflows") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const cwd = resolve(process.cwd());
         const workspace = asString(input, "workspace", cwd) ?? cwd;
         const markdownPaths =
@@ -1646,7 +1662,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         return 0;
     }
     if (command === "savings") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const estimate = (await service.metrics({
             project: asString(input, "project"),
             repo: asString(input, "repo"),
@@ -1668,7 +1684,7 @@ export async function runCli(argv = process.argv.slice(2)) {
     }
 
   if (command === "recall") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.search({
         text: asString(input, "text"),
@@ -1694,7 +1710,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "projects:add") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     const config = readMemFlowConfig(configPath);
     const addedPaths =
       asList(input, "paths") ??
@@ -1747,7 +1763,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "projects:toggle") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     const config = readMemFlowConfig(configPath);
     const path = asString(input, "path");
     if (!path) {
@@ -1906,7 +1922,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "host:bridge") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     const bridgeInput = resolveHostBridgeInput(input);
     const phase = asString(input, "phase", "prepare");
     const hookOutput = input["hook-output"] === true;
@@ -1995,7 +2011,7 @@ export async function runCli(argv = process.argv.slice(2)) {
     return 0;
   }
     if (command === "checkpoint") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         printJson(await service.checkpointSession({
             sessionId: asString(input, "sessionId"),
             title: asString(input, "title"),
@@ -2015,7 +2031,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         return 0;
     }
     if (command === "reload:prepare") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const shellStatus = getShellPromptStatus();
         const sessionId = asString(input, "sessionId", "reload") ?? "reload";
         const coordinates = resolveCoordinates(input, "sessions");
@@ -2046,7 +2062,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         return 0;
     }
     if (command === "resume" || command === "recover" || command === "reload:resume") {
-        const service = new MemoryService(createConnectorFromEnvironment(configPath));
+        const service = createMemoryService(configPath);
         const result = await service.resumeSession({
             sessionId: asString(input, "sessionId"),
             project: asString(input, "project", basename(resolve(process.cwd()))),
@@ -2068,7 +2084,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "compact") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.compactSession({
         sessionId: asString(input, "sessionId"),
@@ -2100,7 +2116,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       });
       return 0;
     }
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.prepareAgentMemory({
         coordinates: resolveCoordinates(input, asString(input, "namespace", "sessions") ?? "sessions"),
@@ -2127,7 +2143,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       });
       return 0;
     }
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.finalizeAgentMemory({
         coordinates: resolveCoordinates(input, asString(input, "namespace", "sessions") ?? "sessions"),
@@ -2165,7 +2181,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "cache:store") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.storePromptCache({
         key: asString(input, "key", "cache-entry") ?? "cache-entry",
@@ -2185,7 +2201,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "cache:get") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.getPromptCache({
         key: asString(input, "key"),
@@ -2198,7 +2214,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "cache:auto:get") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.getPromptCacheAuto({
         prompt: asString(input, "prompt", "") ?? "",
@@ -2213,7 +2229,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "cache:auto:store") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.storePromptCacheAuto({
         prompt: asString(input, "prompt", "") ?? "",
@@ -2234,7 +2250,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "cache:invalidate") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.invalidatePromptCache({
         namespace: asString(input, "namespace", "cache") ?? "cache",
@@ -2252,7 +2268,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "embeddings:backfill") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.backfillEmbeddings({
         namespace: asString(input, "namespace"),
@@ -2270,7 +2286,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "promote:pattern") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     printJson(
       await service.promotePattern({
         title: asString(input, "title", "Recovered engineering pattern") ?? "Recovered engineering pattern",
@@ -2292,7 +2308,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "sync:plan") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     const query =
       typeof input.query === "object" && input.query ? (input.query as Record<string, unknown>) : input;
     const policy =
@@ -2319,7 +2335,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "sync:export") {
-    const service = new MemoryService(createConnectorFromEnvironment(configPath));
+    const service = createMemoryService(configPath);
     const query =
       typeof input.query === "object" && input.query ? (input.query as Record<string, unknown>) : input;
     const policy =
@@ -2430,7 +2446,7 @@ async function runJoinCommand(
   let exportBundle: any = null;
   if (shouldMigrate) {
     process.stdout.write("Exporting existing local data...\n");
-    const oldService = new MemoryService(createConnectorFromEnvironment(configPath));
+    const oldService = createMemoryService(configPath);
     exportBundle = await oldService.export({ limit: 500 });
     process.stdout.write(`  Exported ${exportBundle.entries.length} entries from ${config.connector}.\n`);
   }
@@ -2459,7 +2475,7 @@ async function runJoinCommand(
 
   // Step 3: Verify connection
   try {
-    const newService = new MemoryService(createConnectorFromEnvironment(configPath));
+    const newService = createMemoryService(configPath);
     const health = await newService.health();
     if (!health.ok) {
       process.stderr.write(`Warning: MongoDB connection check returned not-ok. Details: ${JSON.stringify(health.details)}\n`);
@@ -2506,7 +2522,7 @@ async function runJoinCommand(
 }
 
 async function runSecurityAuditCommand(configPath: string, input: Record<string, any>): Promise<number> {
-  const service = new MemoryService(createConnectorFromEnvironment(configPath));
+  const service = createMemoryService(configPath);
   const entries = await service.list({ limit: 10000 });
   const config = readMemFlowConfig(configPath);
   const sweepConfig = {
@@ -2669,10 +2685,12 @@ async function runInviteCommand(configPath: string): Promise<number> {
 }
 
 runCli()
-  .then((code) => {
+  .then(async (code) => {
+    await closeOpenServices();
     process.exit(code ?? 0);
   })
-  .catch((err) => {
+  .catch(async (err) => {
+    await closeOpenServices();
     console.error(err);
     process.exit(1);
   });

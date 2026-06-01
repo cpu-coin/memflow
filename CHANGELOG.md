@@ -33,7 +33,7 @@ First stable release.
 - dependency-linked invalidation and validation workflow
 - workflow ingestion and pre-flight surfacing
 - snippet alias support over the semantic retrieval layer
-- expanded MCP integration roadmap and next-sprint planning
+- public MCP integration documentation and planning references
 
 ### Verified
 
@@ -46,7 +46,7 @@ First stable release.
 
 ## [0.10.0] - 2026-04-05
 
-Initial private testing release.
+Initial testing release.
 
 ### Added
 
