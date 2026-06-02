@@ -64,7 +64,7 @@ export function buildShellPromptBlock(shell: "bash" | "zsh"): string {
       // so it works with any theme (Oh My Zsh, Starship, Powerlevel10k, etc.)
       "memflow_precmd() {",
       `  local _mf_status="$("${nodePath}" "${cliPath}" status:line 2>/dev/null)"`,
-      '  [[ -n "$_mf_status" ]] && print -P "%F{240}${_mf_status}%f"',
+      '  [[ -n "$_mf_status" ]] && print -P "%F{246}${_mf_status}%f"',
       "}",
       "autoload -Uz add-zsh-hook",
       "add-zsh-hook precmd memflow_precmd",
