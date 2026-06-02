@@ -53,6 +53,8 @@ export function buildShellPromptBlock(shell: "bash" | "zsh"): string {
     return [
       BLOCK_START,
       "export MEMFLOW_SHELL_HOOK=1",
+      "RPROMPT=\"\"                          # clear any legacy MemFlow RPROMPT",
+      "unset MEMFLOW_ORIG_RPROMPT 2>/dev/null",
       `export PATH="${shellBinPath}:$PATH"`,
       "memflow() {",
       `  "${nodePath}" "${cliPath}" "$@"`,
