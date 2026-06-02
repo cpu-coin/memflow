@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { findTrackedProjectForPath, getProfileConfigPath, getProfileName, mergeTrackedProjects, readMemFlowConfig, writeMemFlowConfig, setTrackedProjectEnabled, discoverProjects, hasCompletedGuidedSetup } from "./core/config.js";
 import { installHostIntegration, formatHostReloadInstruction, validateHostIntegration, } from "./core/integrations.js";
@@ -1387,7 +1388,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         return runActivationGuide(configPath);
     }
     if (command === "ci:env") {
-        const binPath = "/Users/REDACTED/.memflow/bin";
+        const binPath = join(homedir(), ".memflow", "bin");
         printJson({
             node: process.execPath,
             memflowBin: binPath,
