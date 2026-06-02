@@ -13,7 +13,7 @@ test("findTrackedProjectForPath handles case-insensitive matching on macOS", asy
         {
             enabled: true,
             name: "test-project",
-            path: "/users/REDACTED/projects/test",
+            path: "/users/testuser/projects/test",
             project: "test",
             repo: "test",
             addedAt: new Date().toISOString(),
@@ -22,7 +22,7 @@ test("findTrackedProjectForPath handles case-insensitive matching on macOS", asy
     ];
 
     // Current shell reports uppercase /Users
-    const currentPath = "/Users/REDACTED/projects/test/src/main.js";
+    const currentPath = "/Users/testuser/projects/test/src/main.js";
     const matched = findTrackedProjectForPath(tracked, currentPath);
 
     assert.ok(matched, "Should have matched despite casing difference");
