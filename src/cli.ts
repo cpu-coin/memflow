@@ -269,6 +269,37 @@ function printJson(value: any) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+const SECRET_KEY_PATTERN = /(api[_-]?key|authorization|credential|firebaseidtoken|linktoken|password|pushendpoint|refresh[_-]?token|secret|token|uri)$/i;
+const DB_URI_PATTERN = /\b((?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql):\/\/[^:\s]+:)([^@\s]+)(@[^\s]+)/gi;
+
+function redactDiagnosticValue(value: any, key = ""): any {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    if (SECRET_KEY_PATTERN.test(key)) {
+      return "[REDACTED]";
+    }
+    return value.replace(DB_URI_PATTERN, "$1[REDACTED_PASSWORD]$3");
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactDiagnosticValue(item));
+  }
+
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        redactDiagnosticValue(entryValue, entryKey),
+      ])
+    );
+  }
+
+  return value;
+}
+
 // ─── Human-readable CLI formatters ───────────────────────────────
 
 function printHuman(value: any, formatter: (v: any) => string, useJson?: boolean) {
@@ -1432,7 +1463,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         const service = createMemoryService(configPath);
         const config = readMemFlowConfig(configPath);
         const doctorData = {
-            config,
+            config: redactDiagnosticValue(config),
             onboarding: {
                 completed: hasCompletedGuidedSetup(config),
                 completedAt: config.onboarding?.completedAt,
