@@ -66,6 +66,8 @@ export function buildShellPromptBlock(shell: "bash" | "zsh"): string {
       // so it works with any theme (Oh My Zsh, Starship, Powerlevel10k, etc.)
       "memflow_precmd() {",
       `  local _mf_status="$("${nodePath}" "${cliPath}" status:line 2>/dev/null)"`,
+      '  local _mf_width=$(( ${COLUMNS:-80} > 1 ? ${COLUMNS:-80} - 1 : 80 ))',
+      '  [[ ${#_mf_status} -gt $_mf_width ]] && _mf_status="${_mf_status[1,$_mf_width]}"',
       '  [[ -n "$_mf_status" ]] && print -P "%F{246}${_mf_status}%f"',
       "}",
       "autoload -Uz add-zsh-hook",
@@ -90,6 +92,8 @@ export function buildShellPromptBlock(shell: "bash" | "zsh"): string {
     "memflow_prompt_command() {",
     '  if [ -n "$MEMFLOW_ORIG_PROMPT_COMMAND" ]; then eval "$MEMFLOW_ORIG_PROMPT_COMMAND"; fi',
     `  local _mf_status="$("${nodePath}" "${cliPath}" status:line 2>/dev/null)"`,
+    '  local _mf_width=$(( ${COLUMNS:-80} > 1 ? ${COLUMNS:-80} - 1 : 80 ))',
+    '  [ ${#_mf_status} -gt $_mf_width ] && _mf_status="${_mf_status:0:$_mf_width}"',
     '  [ -n "$_mf_status" ] && printf "\\033[2m%s\\033[0m\\n" "$_mf_status"',
     "}",
     "PROMPT_COMMAND=memflow_prompt_command",

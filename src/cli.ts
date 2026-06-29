@@ -959,19 +959,28 @@ function buildStatusPayload(connector: any, config: any, cwd: string, activity?:
 }
 function formatStatusIndicator(status: any) {
     const state = status.on ? "MemFlow:On" : "MemFlow:Off";
-    const connection = status.integration?.configured ? "Connected" : "Ready";
+    const connection = status.integration?.configured ? "Conn" : "Ready";
     const project = status.tracking.currentProject
         ? status.tracking.currentProject.enabled
-            ? `Tracked:${status.tracking.currentProject.name}`
-            : `Untracked:${status.tracking.currentProject.name}`
-        : "NoProject";
-    const mode = status.shared.configured ? "Shared" : "Local";
+            ? `T:${compactStatusToken(status.tracking.currentProject.name)}`
+            : `U:${compactStatusToken(status.tracking.currentProject.name)}`
+        : "NoProj";
+    const mode = status.shared.configured ? "Shr" : "Loc";
     const automation = status.automation.enabled
         ? status.automation.activeRecent
-            ? "Auto:Active"
-            : "Auto:Configured"
-        : "Auto:Off";
+            ? "A:Act"
+            : "A:Cfg"
+        : "A:Off";
     return `${state} ${connection} ${project} ${mode} ${automation}`;
+}
+function compactStatusToken(value: unknown, maxLength = 18) {
+    const normalized = String(value ?? "")
+        .trim()
+        .replace(/\s+/g, "-");
+    if (normalized.length <= maxLength) {
+        return normalized || "Project";
+    }
+    return `${normalized.slice(0, Math.max(1, maxLength - 1))}…`;
 }
 async function readStatusState(configPath: string, cwd = process.cwd(), includeHealth = true) {
     const config = readMemFlowConfig(configPath);

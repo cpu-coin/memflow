@@ -130,6 +130,35 @@ test("MemFlow config persists enabled hosts and activation state", async () => {
   }
 });
 
+test("MemFlow config keeps missing automation features default-on", async () => {
+  const home = createTempDir();
+  const configPath = join(home, "config.json");
+
+  try {
+    writeMemFlowConfig(
+      {
+        ...createDefaultConfig(),
+        automation: {
+          enabled: true,
+        },
+        databasePath: join(home, "memflow.sqlite"),
+        trackedProjects: [],
+      },
+      configPath
+    );
+
+    const reloaded = readMemFlowConfig(configPath);
+    assert.equal(reloaded.automation.enabled, true);
+    assert.equal(reloaded.automation.autoCompact, true);
+    assert.equal(reloaded.automation.autoFinalize, true);
+    assert.equal(reloaded.automation.autoPrepare, true);
+    assert.equal(reloaded.automation.autoPromptCache, true);
+    assert.equal(reloaded.automation.metrics, true);
+  } finally {
+    rmSync(home, { force: true, recursive: true });
+  }
+});
+
 test("findTrackedProjectForPath returns the nearest tracked repo", async () => {
   const tracked = mergeTrackedProjects([], [
     {

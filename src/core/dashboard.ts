@@ -6,9 +6,11 @@ import { resolve, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { MemoryService } from "./memory-service.js";
+import { mobileChannelPreview, normalizeMobileChannel } from "./mobile-delivery.js";
 import { createConnectorFromEnvironment } from "../mcp/server.js";
 import { readMemFlowConfig, getDefaultConfigPath } from "./config.js";
 import type {
+  MemoryEntry,
   MemoryScope,
   OperationalMetricsSnapshot,
   MemoryStats,
@@ -102,9 +104,24 @@ export function startDashboard(options: DashboardOptions = {}): http.Server {
         });
         const stats = await service.stats();
         const aggregates = buildAggregates({ metrics, config, stats });
-        const warnings = buildWarnings({ health, aggregates });
+        const selfHealingIssues = buildSelfHealingIssues({ health, aggregates });
+        const warnings = selfHealingIssues.map((issue) => issue.message);
         res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({ health, metrics, aggregates, warnings }, null, 2));
+        res.end(JSON.stringify({ health, metrics, aggregates, warnings, selfHealingIssues }, null, 2));
+        return;
+      }
+
+      if (url.pathname === "/api/channels") {
+        const project = url.searchParams.get("project") ?? "global";
+        const channel = url.searchParams.get("channel") ?? "all";
+        const limit = Number(url.searchParams.get("limit") ?? 80);
+        const feed = await buildChannelFeed(service, {
+          channel,
+          project,
+          limit: Number.isFinite(limit) ? limit : 80,
+        });
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ project, channel: feed.channel, channels: feed.channels, messages: feed.messages }, null, 2));
         return;
       }
 
@@ -187,7 +204,7 @@ function renderPage(port: number): string {
 
     /* Toggle controls */
     .controls { display: flex; gap: 6px; align-items: center; }
-    .toggle-btn { padding: 5px 12px; border-radius: 6px; border: 1px solid #2c3d61; background: transparent; color: #6b7fa3; cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 500; transition: all 0.2s; }
+    .toggle-btn { padding: 5px 12px; border-radius: 6px; border: 1px solid #2c3d61; background: transparent; color: #6b7fa3; cursor: pointer; font-size: 11px; font-family: inherit; font-weight: 500; transition: all 0.2s; white-space: nowrap; }
     .toggle-btn:hover { border-color: #4a6a9a; color: #9fb4ff; }
     .toggle-btn.active { background: linear-gradient(135deg, #1a2d4f, #1a2a4a); color: #7dffb3; border-color: #2e5b3f; }
 
@@ -201,8 +218,25 @@ function renderPage(port: number): string {
     .activity-metric { color: #9fb4ff; font-weight: 500; }
     .activity-meta { color: #6b7fa3; font-size: 11px; }
     .activity-count { color: #7dffb3; font-weight: 600; font-size: 13px; }
+    .channel-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .channel-select { background: #0c1525; color: #d8e3ff; border: 1px solid #2c3d61; border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 11px; white-space: nowrap; }
+    .channel-item { display: grid; grid-template-columns: 88px 1fr 120px; gap: 10px; align-items: start; padding: 9px 0; border-bottom: 1px solid #1a2540; font-size: 12px; }
+    .channel-item:last-child { border-bottom: none; }
+    .channel-dir { display: inline-block; width: max-content; padding: 3px 7px; border-radius: 6px; border: 1px solid #2c3d61; color: #9fb4ff; font-size: 10px; font-weight: 600; text-transform: uppercase; white-space: nowrap; }
+    .channel-dir.outbound { color: #7dffb3; border-color: #2e5b3f; background: #0f2618; }
+    .channel-text { color: #e6ecff; line-height: 1.35; overflow-wrap: anywhere; }
+    .channel-meta { color: #6b7fa3; font-size: 11px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .channel-time { color: #6b7fa3; font-size: 11px; text-align: right; white-space: nowrap; }
+    .issue-list { display: grid; gap: 8px; }
+    .issue-item { display: grid; grid-template-columns: 86px 1fr; gap: 10px; align-items: start; padding: 10px 0; border-bottom: 1px solid #1a2540; }
+    .issue-item:last-child { border-bottom: none; }
+    .issue-severity { display: inline-block; width: max-content; padding: 3px 7px; border-radius: 6px; border: 1px solid #5c4a2f; color: #ffd27d; background: #2b2414; font-size: 10px; font-weight: 600; text-transform: uppercase; white-space: nowrap; }
+    .issue-severity.critical { color: #ff9f9f; border-color: #5c2f2f; background: #2b1414; }
+    .issue-severity.info { color: #9fb4ff; border-color: #2c3d61; background: #0c1525; }
+    .issue-title { color: #e6ecff; font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+    .issue-action { color: #6b7fa3; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
 
-    @media (max-width: 640px) { .savings-grid { grid-template-columns: 1fr; } .savings-value { font-size: 28px; } }
+    @media (max-width: 640px) { .savings-grid { grid-template-columns: 1fr; } .savings-value { font-size: 28px; } .channel-item { grid-template-columns: 72px 1fr; } .channel-time { grid-column: 2; text-align: left; } .issue-item { grid-template-columns: 1fr; gap: 5px; } }
   </style>
 </head>
 <body>
@@ -220,12 +254,15 @@ function renderPage(port: number): string {
   <div class="card" id="users">Loading…</div>
   <div class="card" id="status">Loading…</div>
   <div class="card" id="warnings">Loading…</div>
+  <div class="card" id="channels">Loading…</div>
   <div class="card" id="activity">Loading…</div>
   <div class="card" id="projects">Loading…</div>
   <div class="card" id="untracked">Loading…</div>
   <div class="card" id="timeline">Loading…</div>
   <script>
     let viewMode = 'individual';
+    let channelProject = 'global';
+    let channelName = 'all';
 
     function fmtTime(ms) {
       if (ms < 1000) return ms + 'ms';
@@ -236,10 +273,27 @@ function renderPage(port: number): string {
       return (m / 60).toFixed(1) + 'h';
     }
 
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[ch]));
+    }
+
     async function fetchStatus(params = {}) {
       const qs = new URLSearchParams(params);
       const res = await fetch('/api/status' + (qs.toString() ? ('?' + qs.toString()) : ''));
       if (!res.ok) throw new Error('Status fetch failed');
+      return res.json();
+    }
+
+    async function fetchChannels(params = {}) {
+      const qs = new URLSearchParams(params);
+      const res = await fetch('/api/channels' + (qs.toString() ? ('?' + qs.toString()) : ''));
+      if (!res.ok) throw new Error('Channel fetch failed');
       return res.json();
     }
 
@@ -319,7 +373,51 @@ function renderPage(port: number): string {
       const warnings = data.warnings ?? [];
       const el = document.getElementById('warnings');
       if (!warnings.length) { el.innerHTML = '<div class="pill ok">No issues detected</div>'; return; }
-      el.innerHTML = warnings.map(w => '<div class="pill warn">' + w + '</div>').join(' ');
+      const issues = data.selfHealingIssues ?? [];
+      if (!issues.length) {
+        el.innerHTML = warnings.map(w => '<div class="pill warn">' + escapeHtml(w) + '</div>').join(' ');
+        return;
+      }
+      const rows = issues.map(issue => {
+        const severity = escapeHtml(issue.severity ?? 'warning');
+        return '<div class="issue-item">'
+          + '<div><span class="issue-severity ' + severity + '">' + severity + '</span></div>'
+          + '<div><div class="issue-title">' + escapeHtml(issue.message) + '</div>'
+          + '<div class="issue-action">' + escapeHtml(issue.nextAction ?? 'Review MemFlow status and rerun the relevant setup command.') + '</div></div>'
+          + '</div>';
+      }).join('');
+      el.innerHTML = '<h3>Self-Healing Issues</h3><div class="issue-list">' + rows + '</div>';
+    }
+
+    function renderChannels(data, channelData) {
+      const projects = ['global', ...new Set((data.aggregates?.projects ?? []).map(p => p.name).filter(Boolean))];
+      const projectOptions = projects.map(p => '<option value="' + escapeHtml(p) + '"' + (p === channelProject ? ' selected' : '') + '>' + escapeHtml(p === 'global' ? 'Global' : p) + '</option>').join('');
+      const channels = channelData.channels ?? [];
+      if (channelName !== 'all' && !channels.includes(channelName)) channelName = 'all';
+      const channelOptions = ['all', ...channels].map(c => '<option value="' + escapeHtml(c) + '"' + (c === channelName ? ' selected' : '') + '>' + escapeHtml(c === 'all' ? 'All channels' : c) + '</option>').join('');
+      const messages = channelData.messages ?? [];
+      const rows = messages.map(m => {
+        const dirClass = m.direction === 'outbound' ? 'channel-dir outbound' : 'channel-dir';
+        const meta = [m.project, m.channel, m.status].filter(Boolean).join(' · ');
+        const time = m.sentAt ? new Date(m.sentAt).toLocaleString() : '';
+        return '<div class="channel-item">'
+          + '<div><span class="' + dirClass + '">' + escapeHtml(m.direction) + '</span></div>'
+          + '<div><div class="channel-text">' + escapeHtml(m.text) + '</div><div class="channel-meta">' + escapeHtml(meta) + '</div></div>'
+          + '<div class="channel-time">' + escapeHtml(time) + '</div>'
+          + '</div>';
+      }).join('');
+      document.getElementById('channels').innerHTML = '<div class="channel-toolbar">'
+        + '<h3 style="margin:0;">Channels</h3>'
+        + '<div class="controls">'
+        + '<select class="channel-select" onchange="channelProject=this.value;channelName=\\'all\\';refresh()">'
+        + projectOptions
+        + '</select>'
+        + '<select class="channel-select" onchange="channelName=this.value;refresh()">'
+        + channelOptions
+        + '</select>'
+        + '</div>'
+        + '</div>'
+        + (rows || '<div class="pill">No channel traffic</div>');
     }
 
     function renderActivity(data) {
@@ -378,11 +476,15 @@ function renderPage(port: number): string {
 
     async function refresh() {
       try {
-        const data = await fetchStatus();
+        const [data, channelData] = await Promise.all([
+          fetchStatus(),
+          fetchChannels({ project: channelProject, channel: channelName, limit: 80 })
+        ]);
         renderSavings(data);
         renderUsers(data);
         renderStatus(data);
         renderWarnings(data);
+        renderChannels(data, channelData);
         renderActivity(data);
         renderProjects(data);
         renderTimeline(data);
@@ -397,6 +499,78 @@ function renderPage(port: number): string {
   </script>
 </body>
 </html>`;
+}
+
+type ChannelFeedMessage = {
+  channel: string;
+  direction: "inbound" | "outbound";
+  id: string;
+  project: string;
+  sentAt: string;
+  status: string;
+  text: string;
+};
+
+type ChannelFeed = {
+  channel: string;
+  channels: string[];
+  messages: ChannelFeedMessage[];
+};
+
+async function buildChannelFeed(
+  service: MemoryService,
+  input: { channel: string; limit: number; project: string }
+): Promise<ChannelFeed> {
+  const limit = Math.min(Math.max(input.limit, 1), 200);
+  const project = input.project || "global";
+  const channel = channelFilter(input.channel);
+  const [inbox, outbox] = await Promise.all([
+    service.list({ namespace: "ag_bridge/inbox", includeExpired: true, limit: 200 }),
+    service.list({ namespace: "ag_bridge/outbox", includeExpired: true, limit: 200 }),
+  ]);
+
+  const projectMessages = [...inbox.map((entry) => channelMessage(entry, "inbound")), ...outbox.map((entry) => channelMessage(entry, "outbound"))]
+    .filter((message) => project === "global" || message.project === project);
+  const channels = [...new Set(projectMessages.map((message) => message.channel))].sort();
+  const messages = projectMessages
+    .filter((message) => channel === "all" || message.channel === channel)
+    .sort((left, right) => Date.parse(right.sentAt) - Date.parse(left.sentAt))
+    .slice(0, limit);
+
+  return { channel, channels, messages };
+}
+
+function channelMessage(entry: MemoryEntry, direction: "inbound" | "outbound"): ChannelFeedMessage {
+  const metadata = entry.metadata ?? {};
+  const project =
+    stringMetadata(metadata.project) ??
+    entry.coordinates.project ??
+    "global";
+  return {
+    channel: normalizeMobileChannel(metadata.channel),
+    direction,
+    id: entry.id,
+    project,
+    sentAt:
+      stringMetadata(metadata.mobileTimestamp) ??
+      stringMetadata(metadata.timestamp) ??
+      entry.updatedAt ??
+      entry.createdAt,
+    status:
+      stringMetadata(metadata.status) ??
+      (entry.tags.includes("pending") ? "pending" : entry.tags.includes("unread") ? "unread" : "read"),
+    text: mobileChannelPreview(entry.content),
+  };
+}
+
+function stringMetadata(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function channelFilter(value: unknown): string {
+  return typeof value === "string" && value.trim().toLowerCase() === "all"
+    ? "all"
+    : normalizeMobileChannel(value);
 }
 
 type AggregateProject = {
@@ -620,28 +794,74 @@ function buildAggregates(input: {
 }
 
 function buildWarnings(input: { health: { ok?: boolean }; aggregates: Aggregates }): string[] {
-  const warnings: string[] = [];
+  return buildSelfHealingIssues(input).map((issue) => issue.message);
+}
+
+export type SelfHealingIssue = {
+  id: string;
+  message: string;
+  nextAction: string;
+  severity: "critical" | "warning" | "info";
+};
+
+export function buildSelfHealingIssues(input: { health: { ok?: boolean }; aggregates: Aggregates }): SelfHealingIssue[] {
+  const issues: SelfHealingIssue[] = [];
   if (!input.health.ok) {
-    warnings.push("Connector offline or unhealthy");
+    issues.push({
+      id: "connector-unhealthy",
+      message: "Connector offline or unhealthy",
+      nextAction: "Run `memflow doctor`; then run `memflow restart` after fixing connector credentials or local storage access.",
+      severity: "critical",
+    });
   }
   if (input.aggregates.trackedProjects === 0) {
-    warnings.push("No tracked projects configured");
+    issues.push({
+      id: "no-tracked-projects",
+      message: "No tracked projects configured",
+      nextAction: "Run `memflow activate` or `memflow projects:add --path <repo>` in each workspace that should be self-healed.",
+      severity: "warning",
+    });
   }
   if (input.aggregates.activeProjects === 0) {
-    warnings.push("No recent activity in the last 7 days");
+    issues.push({
+      id: "no-recent-activity",
+      message: "No recent activity in the last 7 days",
+      nextAction: "Reload the host integration or run `memflow agent:prepare` and `memflow agent:finalize` from an active agent session.",
+      severity: "warning",
+    });
   }
   const totals = input.aggregates.totals ?? {};
   if ((totals.cache_hit ?? 0) === 0 && (totals.cache_miss ?? 0) > 0) {
-    warnings.push("Cache misses are occurring but no cache hits yet");
+    issues.push({
+      id: "cache-misses-without-hits",
+      message: "Cache misses are occurring but no cache hits yet",
+      nextAction: "Let MemFlow store cache entries through `agent:finalize`, or seed known prompts with `memflow cache:store`.",
+      severity: "info",
+    });
   }
   if ((totals.compaction ?? 0) === 0) {
-    warnings.push("No compactions yet; enable automation or run `memflow compact`");
+    issues.push({
+      id: "no-compactions",
+      message: "No compactions yet; enable automation or run `memflow compact`",
+      nextAction: "Run `memflow start` to enable automation, or run `memflow compact --sessionId active` before long-session handoffs.",
+      severity: "warning",
+    });
   }
   if ((totals.checkpoint ?? 0) === 0) {
-    warnings.push("No checkpoints recorded; enable automation to capture session recoveries");
+    issues.push({
+      id: "no-checkpoints",
+      message: "No checkpoints recorded; enable automation to capture session recoveries",
+      nextAction: "Run `memflow checkpoint --sessionId active --goal \"...\" --summary \"...\"` or enable host automation.",
+      severity: "warning",
+    });
   }
   if ((input.aggregates.untrackedEvents ?? 0) > 0) {
-    warnings.push("Some activity is untracked; run `memflow activate` inside each project");
+    issues.push({
+      id: "untracked-activity",
+      message: "Some activity is untracked; run `memflow activate` inside each project",
+      nextAction: "Open each project with untracked activity and run `memflow activate` so future fixes attach to the right project.",
+      severity: "warning",
+    });
   }
-  return warnings;
+  return issues;
 }

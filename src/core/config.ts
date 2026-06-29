@@ -119,6 +119,10 @@ export function readMemFlowConfig(configPath: string = getDefaultConfigPath()): 
       ...(defaults.onboarding ?? {}),
       ...(parsed.onboarding ?? {}),
     },
+    automation: {
+      ...defaults.automation,
+      ...(parsed.automation ?? {}),
+    },
     trackedProjects: Array.isArray(parsed.trackedProjects)
       ? parsed.trackedProjects.map((project) => normalizeTrackedProject(project))
       : [],
@@ -150,6 +154,10 @@ export function writeMemFlowConfig(
     onboarding: {
       ...createDefaultConfig().onboarding,
       ...(config.onboarding ?? {}),
+    },
+    automation: {
+      ...createDefaultConfig().automation,
+      ...(config.automation ?? {}),
     },
     trackedProjects: [...config.trackedProjects]
       .map((project) => normalizeTrackedProject(project))

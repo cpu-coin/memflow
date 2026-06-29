@@ -2,9 +2,8 @@
   "mcpServers": {
     "memflow": {
       "type": "stdio",
-      "command": "/Users/REDACTED/.nvm/versions/node/v22.21.1/bin/node",
+      "command": "/Users/seanbarger_1/.memflow/bin/memflow-mcp",
       "args": [
-        "/Users/REDACTED/Documents/projects/memflow/dist/mcp/server.js",
         "--config",
         "/Users/REDACTED/.memflow/config.json"
       ]

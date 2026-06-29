@@ -26,7 +26,6 @@
     "memflow-mcp": "./dist/mcp/server.js"
   },
   "scripts": {
-    "prebuild": "node scripts/bump-patch.mjs",
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js dist/mcp/server.js",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/**/*.test.mjs",
@@ -36,6 +35,7 @@
     "version:show": "npm run build && node dist/cli.js version",
     "version:set": "node scripts/set-version.mjs",
     "version:bump": "node scripts/bump-patch.mjs",
+    "deploy:prepare": "npm run version:bump && npm run build",
     "release:check": "npm test && npm pack --dry-run"
   },
   "dependencies": {

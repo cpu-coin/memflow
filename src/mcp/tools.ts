@@ -1,6 +1,12 @@
 import { z } from "zod";
 
 import type { MemoryService } from "../core/memory-service.js";
+import {
+  DEFAULT_MOBILE_CHANNEL,
+  mobileSafeOutboxWrite,
+  mobileSafeResponse,
+  normalizeMobileChannel,
+} from "../core/mobile-delivery.js";
 import type { MemoryExportBundle } from "../types/memory.js";
 import { ToolGuard } from "./guard.js";
 
@@ -92,7 +98,7 @@ export function registerMemoryTools(server: {
       lastVerifiedAt: z.string().min(1).optional(),
     }),
     execute: async (args) =>
-      guard.run("memory_store", args, async () => asJson(await service.upsert(args))),
+      guard.run("memory_store", args, async () => asJson(await service.upsert(mobileSafeOutboxWrite(args)))),
   });
 
   server.addTool({
@@ -564,21 +570,27 @@ for new mobile requests. Returns unread messages from the ag_bridge inbox.
 Always call mobile_respond after processing a mobile message.`,
     parameters: z.object({
       project: z.string().min(1).optional().describe("Filter by project name"),
+      channel: z.string().min(1).optional().describe("Filter by bridge channel, e.g. work or debug"),
       limit: z.number().int().positive().max(50).optional().describe("Max messages to return (default 10)"),
     }),
-    execute: async ({ project, limit }) =>
-      guard.run("mobile_read_inbox", { project, limit }, async () => {
+    execute: async ({ project, channel, limit }) =>
+      guard.run("mobile_read_inbox", { project, channel, limit }, async () => {
         if (!project) {
           throw new Error("project parameter is required to prevent cross-project message theft.");
         }
+        const requestedChannel = channel ? normalizeMobileChannel(channel) : undefined;
         const entries: any[] = await service.list({
           namespace: "ag_bridge/inbox",
           tags: ["pending"],
           project,
-          limit: limit ?? 10,
+          limit: 500,
         });
+        const channelEntries = requestedChannel
+          ? entries.filter((entry) => normalizeMobileChannel(entry.metadata?.channel) === requestedChannel)
+          : entries;
+        const limitedEntries = channelEntries.slice(0, limit ?? 10);
         // Mark as read by swapping "pending" tag to "read"
-        for (const entry of entries) {
+        for (const entry of limitedEntries) {
           await service.upsert({
             ...entry,
             tags: Array.isArray(entry.tags)
@@ -588,12 +600,14 @@ Always call mobile_respond after processing a mobile message.`,
         }
         return asJson({
           ok: true,
-          count: entries.length,
-          messages: entries.map((e: any) => ({
+          channel: requestedChannel ?? null,
+          count: limitedEntries.length,
+          messages: limitedEntries.map((e: any) => ({
             id: e.id,
             text: e.content,
             from: e.metadata?.from ?? "user",
             project: e.metadata?.project ?? project,
+            channel: normalizeMobileChannel(e.metadata?.channel),
             sentAt: e.metadata?.mobileTimestamp ?? e.createdAt,
           })),
         });
@@ -609,37 +623,60 @@ in the mobile UI. Always include the project context when available.`,
     parameters: z.object({
       message: z.string().min(1).describe("The response text to send to mobile"),
       project: z.string().min(1).optional().describe("Project context for the response"),
+      channel: z.string().min(1).optional().describe("Bridge channel for the response, e.g. work or debug"),
       inReplyTo: z.string().min(1).optional().describe("ID of the mobile message being replied to"),
     }),
-    execute: async ({ message, project, inReplyTo }) =>
-      guard.run("mobile_respond", { message, project, inReplyTo }, async () => {
+    execute: async ({ message, project, channel, inReplyTo }) =>
+      guard.run("mobile_respond", { message, project, channel, inReplyTo }, async () => {
+        const replyTarget = inReplyTo ? await service.get(inReplyTo).catch(() => null) : null;
+        const replyProject =
+          project ??
+          (typeof replyTarget?.coordinates?.project === "string" ? replyTarget.coordinates.project : undefined) ??
+          (typeof replyTarget?.metadata?.project === "string" ? replyTarget.metadata.project : undefined) ??
+          "global";
+        const replyChannel = normalizeMobileChannel(
+          channel ?? (typeof replyTarget?.metadata?.channel === "string" ? replyTarget.metadata.channel : undefined),
+          DEFAULT_MOBILE_CHANNEL
+        );
+        const mobileMessage = mobileSafeResponse(message);
         const msgId = `resp_${Date.now().toString(36)}`;
         const now = new Date().toISOString();
         const result = await service.upsert({
           key: `ag_bridge/outbox/${msgId}`,
           title: `Mobile response ${msgId}`,
-          content: message,
+          content: mobileMessage.delivered,
           coordinates: {
             namespace: "ag_bridge/outbox",
             scope: "workspace",
-            ...(project ? { project } : {}),
+            project: replyProject,
           },
           kind: "knowledge",
-          tags: ["agent-response", "unread", "ag_bridge", ...(project ? [project] : [])],
+          tags: ["agent-response", "unread", "ag_bridge", replyProject, replyChannel],
           metadata: {
             msgId,
             from: "agent",
             to: "user",
-            channel: "work",
+            channel: replyChannel,
             timestamp: now,
             status: "unread",
-            project: project ?? "global",
+            project: replyProject,
             inReplyTo: inReplyTo ?? null,
+            mobileDelivery: {
+              originalLength: mobileMessage.originalLength,
+              deliveredLength: mobileMessage.delivered.length,
+              reason: mobileMessage.reason,
+              truncated: mobileMessage.truncated,
+            },
           },
           provenance: { source: "agent", actorId: "antigravity" },
         });
-        return asJson({ ok: true, msgId, method: "memflow_outbox", result });
+        return asJson({
+          ok: true,
+          msgId,
+          method: "memflow_outbox",
+          mobileDelivery: result.metadata.mobileDelivery,
+          result,
+        });
       }),
   });
 }
-
